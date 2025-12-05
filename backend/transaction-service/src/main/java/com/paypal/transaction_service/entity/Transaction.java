@@ -15,11 +15,11 @@ public class Transaction {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "sender_name", nullable = false)
-    private String senderName;
+    @Column(nullable = false)
+    private Long senderId;
 
-    @Column(name = "receiver_name", nullable = false)
-    private String receiverName;
+    @Column(nullable = false)
+    private Long receiverId;
 
     @Column(nullable = false)
     @Positive(message = "Amount must be positive")
