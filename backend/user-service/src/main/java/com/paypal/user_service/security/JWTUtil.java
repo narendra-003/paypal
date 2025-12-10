@@ -17,13 +17,13 @@ public class JWTUtil {
     @Value("${app.jwt.secret}")
     private String JWT_SECRET;
 
-    private Key getSigninkKey() {
+    private Key getSigninKey() {
         return Keys.hmacShaKeyFor(JWT_SECRET.getBytes());
     }
 
     public String extractEmail(String token) {
         return Jwts.parserBuilder()
-                .setSigningKey(getSigninkKey())
+                .setSigningKey(getSigninKey())
                 .build()
                 .parseClaimsJws(token)
                 .getBody()
@@ -41,7 +41,7 @@ public class JWTUtil {
 
     public String extractUsername(String token) {
         return Jwts.parserBuilder()
-                .setSigningKey(getSigninkKey())
+                .setSigningKey(getSigninKey())
                 .build()
                 .parseClaimsJws(token)
                 .getBody()
@@ -54,13 +54,13 @@ public class JWTUtil {
                 .setSubject(email)
                 .setIssuedAt(new Date(System.currentTimeMillis()))
                 .setExpiration(new Date(System.currentTimeMillis() + AppConstants.JWT_EXPIRATION))
-                .signWith(getSigninkKey(), SignatureAlgorithm.HS256)
+                .signWith(getSigninKey(), SignatureAlgorithm.HS256)
                 .compact(); // build
     }
 
     public String extractRole(String token) {
         return (String) Jwts.parserBuilder()
-                .setSigningKey(getSigninkKey())
+                .setSigningKey(getSigninKey())
                 .build()
                 .parseClaimsJws(token)
                 .getBody()
@@ -71,7 +71,7 @@ public class JWTUtil {
     public Long extractUserId(String token) {
         return Long.parseLong(
                 Jwts.parserBuilder()
-                        .setSigningKey(getSigninkKey())
+                        .setSigningKey(getSigninKey())
                         .build()
                         .parseClaimsJws(token)
                         .getBody()
