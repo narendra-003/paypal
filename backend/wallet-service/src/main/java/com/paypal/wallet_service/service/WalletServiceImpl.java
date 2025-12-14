@@ -48,8 +48,8 @@ public class WalletServiceImpl implements WalletService{
         Wallet savedWallet = walletRepository.save(wallet);
         Long amount = creditRequest.getAmount();
 
-        Transaction transaction = new Transaction(wallet.getId(), "CREDIT", amount, "SUCCESS");
-        transactionRepository.save(transaction);
+//        Transaction transaction = new Transaction(wallet.getId(), "CREDIT", amount, "SUCCESS");
+//        transactionRepository.save(transaction);
 
         System.out.println("CREDIT Done: walletID= " + savedWallet.getId() + ", newBalance= " + savedWallet.getBalance()
                 + ", availableBalance= " + savedWallet.getAvailableBalance());
