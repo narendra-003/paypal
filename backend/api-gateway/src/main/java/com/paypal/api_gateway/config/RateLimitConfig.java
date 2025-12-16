@@ -1,5 +1,7 @@
 package com.paypal.api_gateway.config;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.cloud.gateway.filter.ratelimit.KeyResolver;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -7,6 +9,7 @@ import reactor.core.publisher.Mono;
 
 @Configuration
 public class RateLimitConfig {
+    private static final Logger logger = LoggerFactory.getLogger(RateLimitConfig.class);
 
     @Bean
     public KeyResolver userKeyResolver() {
@@ -16,11 +19,11 @@ public class RateLimitConfig {
                 return Mono.just(userEmail);
             }
 
-            System.out.println("hhhhhhhhhhhhhhhhhhhhhhhh--------------------");
+            String ipAddress = exchange.getRequest().getRemoteAddress().getAddress().getHostAddress();
+            logger.debug("Rate limiting by IP address (no user email header): {}", ipAddress);
 
             // fallback via ip address
-            System.out.println("ip: " + exchange.getRequest().getRemoteAddress().getAddress().getHostAddress());
-            return Mono.just(exchange.getRequest().getRemoteAddress().getAddress().getHostAddress());
+            return Mono.just(ipAddress);
         };
     }
 }

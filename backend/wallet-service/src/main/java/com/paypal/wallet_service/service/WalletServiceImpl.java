@@ -1,13 +1,11 @@
 package com.paypal.wallet_service.service;
 
 import com.paypal.wallet_service.dto.*;
-import com.paypal.wallet_service.entity.Transaction;
 import com.paypal.wallet_service.entity.Wallet;
 import com.paypal.wallet_service.entity.WalletHold;
 import com.paypal.wallet_service.enums.WalletHoldStatus;
 import com.paypal.wallet_service.exception.InsufficientFundsException;
 import com.paypal.wallet_service.exception.NotFoundException;
-import com.paypal.wallet_service.repository.TransactionRepository;
 import com.paypal.wallet_service.repository.WalletHoldRepository;
 import com.paypal.wallet_service.repository.WalletRepository;
 import jakarta.transaction.Transactional;
@@ -17,12 +15,10 @@ import org.springframework.stereotype.Service;
 public class WalletServiceImpl implements WalletService{
     private final WalletRepository walletRepository;
     private final WalletHoldRepository walletHoldRepository;
-    private final TransactionRepository transactionRepository;
 
-    public WalletServiceImpl(WalletRepository walletRepository, WalletHoldRepository walletHoldRepository, TransactionRepository transactionRepository) {
+    public WalletServiceImpl(WalletRepository walletRepository, WalletHoldRepository walletHoldRepository) {
         this.walletRepository = walletRepository;
         this.walletHoldRepository = walletHoldRepository;
-        this.transactionRepository = transactionRepository;
     }
 
     @Override

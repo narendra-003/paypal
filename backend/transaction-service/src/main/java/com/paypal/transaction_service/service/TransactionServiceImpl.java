@@ -6,6 +6,8 @@ import com.paypal.transaction_service.entity.Transaction;
 import com.paypal.transaction_service.exception.NotFoundException;
 import com.paypal.transaction_service.kafka.KafkaEventProducer;
 import com.paypal.transaction_service.repository.TransactionRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -19,6 +21,8 @@ import java.util.List;
 
 @Service
 public class TransactionServiceImpl implements TransactionService {
+
+    private static final Logger logger = LoggerFactory.getLogger(TransactionServiceImpl.class);
 
     private final TransactionRepository transactionRepository;
     private final ObjectMapper objectMapper;
@@ -34,7 +38,8 @@ public class TransactionServiceImpl implements TransactionService {
 
     @Override
     public Transaction createTransaction(Transaction transactionRequest) {
-        System.out.println("Entered createTransaction()");
+        logger.info("Creating transaction - Sender: {}, Receiver: {}, Amount: {}",
+                transactionRequest.getSenderId(), transactionRequest.getReceiverId(), transactionRequest.getAmount());
 
         Long senderId = transactionRequest.getSenderId();
         Long receiverId = transactionRequest.getReceiverId();
@@ -48,7 +53,8 @@ public class TransactionServiceImpl implements TransactionService {
         transaction.setTimestamp(LocalDateTime.now());
         transaction.setStatus("PENDING");
         Transaction savedTransaction = transactionRepository.save(transaction);
-        System.out.println("Transaction PENDING saved: " + transaction);
+        logger.info("Transaction saved with PENDING status: ID={}, Sender={}, Receiver={}, Amount={}",
+                savedTransaction.getId(), senderId, receiverId, amount);
 
         String walletServiceUrl = "http://localhost:8084/api/wallets"; // wallet service base URL
         HttpHeaders httpHeaders = new HttpHeaders();
@@ -58,24 +64,8 @@ public class TransactionServiceImpl implements TransactionService {
         boolean captured = false; // whether capture (actual debit) completed
 
         try {
-//             Step 1: Place hold on sender wallet
-            String holdJson = String.format("{\"userId\": %d, \"currency\": \"INR\", \"amount\": %.2f}", senderId, amount);
-            HttpEntity<String> holdEntity = new HttpEntity<>(holdJson, httpHeaders);
-            ResponseEntity<String> holdResponse = restTemplate.postForEntity(walletServiceUrl + "/hold", holdEntity,
-                    String.class);
-
-            if(!holdResponse.getStatusCode().is2xxSuccessful() || holdResponse.getBody() == null) {
-                throw new RuntimeException("Failed to place hold: status= " + holdResponse.getStatusCode());
-            }
-
-            //Extract hold reference from response safely
-            JsonNode holdNode = objectMapper.readTree(holdResponse.getBody());
-            if(holdNode.get("holdReference") == null) {
-                throw new RuntimeException("Hold response missing holdReference: " + holdResponse.getBody());
-            }
-
-            holdReference = holdNode.get("holdReference").asText();
-            System.out.println("Hold placed: " + holdReference);
+//           Step 1: Place hold on sender wallet
+            holdReference = placeHold(savedTransaction);
 
             // NEW: check receiver wallet exists BEFORE capture
             try {
@@ -83,19 +73,19 @@ public class TransactionServiceImpl implements TransactionService {
                 if (!receiverCheck.getStatusCode().is2xxSuccessful()) {
                     // release hold and fail the transaction
                     tryReleaseHold(walletServiceUrl, holdReference, httpHeaders);
-                    System.out.println("Receiver wallet missing → hold released: " + holdReference);
+                    logger.warn("Receiver wallet missing - Hold released: {} for transaction: {}", holdReference, savedTransaction.getId());
                     savedTransaction.setStatus("FAILED");
                     savedTransaction = transactionRepository.save(savedTransaction);
-                    System.out.println("Transaction FAILED (receiver wallet missing): " + savedTransaction);
+                    logger.error("Transaction FAILED - Receiver wallet missing: ID={}", savedTransaction.getId());
                     return savedTransaction;
                 }
             } catch (HttpClientErrorException ex) {
                 // receiver not found or other 4xx
-                System.err.println("Receiver wallet check failed: " + ex.getResponseBodyAsString());
+                logger.error("Receiver wallet check failed for wallet ID {}: {}", receiverId, ex.getResponseBodyAsString());
                 tryReleaseHold(walletServiceUrl, holdReference, httpHeaders);
                 savedTransaction.setStatus("FAILED");
                 savedTransaction = transactionRepository.save(savedTransaction);
-                System.out.println("Transaction FAILED (receiver check error): " + savedTransaction);
+                logger.error("Transaction FAILED - Receiver check error: ID={}", savedTransaction.getId());
                 return savedTransaction;
             }
 
@@ -106,16 +96,16 @@ public class TransactionServiceImpl implements TransactionService {
 
             if (!captureResponse.getStatusCode().is2xxSuccessful()) {
                 // If capture failed, release hold and fail
-                System.err.println("Capture failed: status=" + captureResponse.getStatusCode() + " body=" + captureResponse.getBody());
+                logger.error("Capture failed for hold {}: status={}, body={}",
+                        holdReference, captureResponse.getStatusCode(), captureResponse.getBody());
                 tryReleaseHold(walletServiceUrl, holdReference, httpHeaders);
                 savedTransaction.setStatus("FAILED");
                 savedTransaction = transactionRepository.save(savedTransaction);
-
-                System.out.println("Transaction FAILED (capture failed): " + savedTransaction);
+                logger.error("Transaction FAILED - Capture failed: ID={}", savedTransaction.getId());
                 return savedTransaction;
             }
             captured = true;
-            System.out.println("Hold captured → sender debited");
+            logger.info("Hold captured successfully - Sender debited: Hold={}, Transaction={}", holdReference, savedTransaction.getId());
 
             // Step 3: Credit receiver wallet
             String creditJson = String.format("{\"userId\": %d, \"currency\": \"INR\", \"amount\": %.2f}", receiverId, amount);
@@ -126,10 +116,11 @@ public class TransactionServiceImpl implements TransactionService {
                 if(!creditResponse.getStatusCode().is2xxSuccessful()) {
                     throw new RuntimeException("Failed to credit receiver: status= " + creditResponse.getStatusCode());
                 }
-                System.out.println("Receiver credited successfully");
+                logger.info("Receiver credited successfully: Receiver={}, Amount={}, Transaction={}",
+                        receiverId, amount, savedTransaction.getId());
             } catch (HttpClientErrorException creditEx) {
                 // Credit failed AFTER capture — perform compensating refund to sender
-                System.err.println("Credit failed: " + creditEx.getResponseBodyAsString());
+                logger.error("Credit failed for receiver {}: {}", receiverId, creditEx.getResponseBodyAsString());
 
                 // Attempt to refund sender
                 try {
@@ -139,44 +130,46 @@ public class TransactionServiceImpl implements TransactionService {
                             walletServiceUrl + "/credit", refundEntity, String.class);
 
                     if(refundResponse.getStatusCode().is2xxSuccessful()) {
-                        System.out.println("Compensating refund to sender succeeded");
+                        logger.info("Compensating refund to sender succeeded: Sender={}, Amount={}, Transaction={}",
+                                senderId, amount, savedTransaction.getId());
                     } else {
-                        System.err.println("Compensating refund to sender returned non-2xx: " + refundResponse.getStatusCode());
+                        logger.error("Compensating refund returned non-2xx status: {}", refundResponse.getStatusCode());
                     }
                 } catch (Exception ex) {
-                    System.err.println("Compensating refund to sender failed: " + ex.getMessage());
+                    logger.error("Compensating refund to sender failed: {}", ex.getMessage(), ex);
                 }
 
                 savedTransaction.setStatus("FAILED");
                 savedTransaction = transactionRepository.save(savedTransaction);
-                System.out.println("Transaction FAILED (credit failed & refunded sender): " + savedTransaction);
+                logger.error("Transaction FAILED - Credit failed & refunded sender: ID={}", savedTransaction.getId());
                 return savedTransaction;
             }
 
             // Step 4: Mark transaction as SUCCESS
             savedTransaction.setStatus("SUCCESS");
             savedTransaction = transactionRepository.save(savedTransaction);
-            System.out.println("Transaction SUCCESS: " + savedTransaction);
+            logger.info("Transaction SUCCESS: ID={}, Sender={}, Receiver={}, Amount={}",
+                    savedTransaction.getId(), senderId, receiverId, amount);
 
         } catch (HttpClientErrorException ex) {
-            System.err.println("Wallet service returned error: " + ex.getResponseBodyAsString());
+            logger.error("Wallet service error: {}", ex.getResponseBodyAsString(), ex);
             if (holdReference != null && !captured) {
                 tryReleaseHold(walletServiceUrl, holdReference, httpHeaders);
             }
 
             savedTransaction.setStatus("FAILED");
             savedTransaction = transactionRepository.save(savedTransaction);
-            System.out.println("Transaction FAILED saved (4xx): " + savedTransaction);
+            logger.error("Transaction FAILED - 4xx error: ID={}", savedTransaction.getId());
             return savedTransaction;
         } catch (Exception ex) {
-            System.err.println("Transaction failed: " + ex.getMessage());
+            logger.error("Transaction failed with exception: {}", ex.getMessage(), ex);
             if (holdReference != null && !captured) {
                 tryReleaseHold(walletServiceUrl, holdReference, httpHeaders);
             }
 
             savedTransaction.setStatus("FAILED");
             savedTransaction = transactionRepository.save(savedTransaction);
-            System.out.println("Transaction FAILED saved (4xx): " + savedTransaction);
+            logger.error("Transaction FAILED - Exception occurred: ID={}", savedTransaction.getId());
             return savedTransaction;
         }
 
@@ -184,10 +177,9 @@ public class TransactionServiceImpl implements TransactionService {
         try {
             String key = String.valueOf(savedTransaction.getId());
             kafkaEventProducer.sendTransactionEvent(key, savedTransaction); // actual txn object
-            System.out.println("Kafka message sent");
+            logger.info("Kafka event sent successfully for transaction: ID={}", savedTransaction.getId());
         } catch (Exception ex) {
-            System.err.println("Failed to send Kafka event: " + ex.getMessage());
-            ex.printStackTrace();
+            logger.error("Failed to send Kafka event for transaction {}: {}", savedTransaction.getId(), ex.getMessage(), ex);
         }
 
         return savedTransaction;
@@ -204,14 +196,15 @@ public class TransactionServiceImpl implements TransactionService {
             String releaseJson = String.format("{\"holdReference\": \"%s\"}", holdReference);
             HttpEntity<String> releaseEntity = new HttpEntity<>(releaseJson, httpHeaders);
 
-            System.out.println("Attempting hold release via: " + releaseUrl);
+            logger.info("Attempting to release hold via: {} with reference: {}", releaseUrl, holdReference);
             ResponseEntity<String> releaseResponse = restTemplate.postForEntity(releaseUrl, releaseEntity, String.class);
-            System.out.println("ℹRelease response: status= " + releaseResponse.getStatusCode() + " body= " + releaseResponse.getBody());
+            logger.info("Hold release response: status={}, body={}", releaseResponse.getStatusCode(), releaseResponse.getBody());
         } catch (Exception ex) {
             // log and move on (we don't want the whole transaction to crash on release failure)
-            System.err.println("Failed to release hold [" + holdReference + "]: " + ex.getMessage());
+            logger.error("Failed to release hold {}: {}", holdReference, ex.getMessage(), ex);
         }
     }
+
     @Override
     public List<Transaction> getAllTransactions() {
         List<Transaction> transactions = transactionRepository.findAll();
@@ -230,46 +223,43 @@ public class TransactionServiceImpl implements TransactionService {
                 .orElseThrow(() -> new NotFoundException("Transaction not found with ID: " + id));
         return transaction;
     }
-//
-//    // Helper methods
-//
-//
-//    private ResponseEntity<String> post(String path, String body) {
-//        HttpHeaders httpHeaders = new HttpHeaders();
-//        httpHeaders.setContentType(MediaType.APPLICATION_JSON);
-//
-//        HttpEntity<String> httpEntity = new HttpEntity<>(body, httpHeaders);
-//        return restTemplate.postForEntity(walletUrl() + path, httpEntity, String.class);
-//    }
-//
-//
-//
-//    private String walletUrl() {
-//        return "http://localhost:8084/api/wallets";
-//    }
-//
-//    private String json(String fmt, Object... args) {
-//        return String.format(fmt, args);
-//    }
-//
-//    private String placeHold(Transaction transaction) throws Exception{
-//        String holdJson = json("{\"userId\": %d, \"currency\": \"INR\", \"amount\": %.2f}",
-//                transaction.getSenderId(), transaction.getAmount());
-//        ResponseEntity<String> holdResponse = post("/hold", holdJson);
-//
-//        if(!holdResponse.getStatusCode().is2xxSuccessful() || holdResponse.getBody() == null) {
-//            throw new RuntimeException("Failed to place hold: status= " + holdResponse.getStatusCode());
-//        }
-//
-//        //Extract hold reference from response safely
-//        JsonNode holdNode = objectMapper.readTree(holdResponse.getBody());
-//        if(holdNode.get("holdReference") == null) {
-//            throw new RuntimeException("Hold response missing holdReference: " + holdResponse.getBody());
-//        }
-//
-//        String holdReference = holdNode.get("holdReference").asText();
-//        System.out.println("Hold placed: " + holdReference);
-//        return holdReference;
-//    }
+
+    // Helper methods
+    private ResponseEntity<String> post(String path, String body) {
+        HttpHeaders httpHeaders = new HttpHeaders();
+        httpHeaders.setContentType(MediaType.APPLICATION_JSON);
+
+        HttpEntity<String> httpEntity = new HttpEntity<>(body, httpHeaders);
+        return restTemplate.postForEntity(walletUrl() + path, httpEntity, String.class);
+    }
+
+    private String walletUrl() {
+        return "http://localhost:8084/api/wallets";
+    }
+
+    private String json(String fmt, Object... args) {
+        return String.format(fmt, args);
+    }
+
+    private String placeHold(Transaction transaction) throws Exception{
+        String holdJson = json("{\"userId\": %d, \"currency\": \"INR\", \"amount\": %.2f}",
+                transaction.getSenderId(), transaction.getAmount());
+        ResponseEntity<String> holdResponse = post("/hold", holdJson);
+
+        if(!holdResponse.getStatusCode().is2xxSuccessful() || holdResponse.getBody() == null) {
+            throw new RuntimeException("Failed to place hold: status= " + holdResponse.getStatusCode());
+        }
+
+        //Extract hold reference from response safely
+        JsonNode holdNode = objectMapper.readTree(holdResponse.getBody());
+        if(holdNode.get("holdReference") == null) {
+            throw new RuntimeException("Hold response missing holdReference: " + holdResponse.getBody());
+        }
+
+        String holdReference = holdNode.get("holdReference").asText();
+        logger.info("Hold placed successfully: Hold={}, Transaction={}, Amount={}",
+                holdReference, transaction.getId(), transaction.getAmount());
+        return holdReference;
+    }
 
 }

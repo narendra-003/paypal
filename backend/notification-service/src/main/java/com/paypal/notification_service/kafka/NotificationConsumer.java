@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.paypal.notification_service.dto.TransactionDto;
 import com.paypal.notification_service.entity.Notification;
 import com.paypal.notification_service.repository.NotificationRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
@@ -12,6 +14,8 @@ import java.time.LocalDateTime;
 
 @Component
 public class NotificationConsumer {
+    private static final Logger logger = LoggerFactory.getLogger(NotificationConsumer.class);
+
     private final NotificationRepository notificationRepository;
     private final ObjectMapper objectMapper;
 
@@ -23,7 +27,8 @@ public class NotificationConsumer {
 
     @KafkaListener(topics = "txn-initiated", groupId = "notification-group")
     public void listener(TransactionDto transaction) throws JsonProcessingException {
-        System.out.println("Received transaction: " + transaction);
+        logger.info("Received transaction from Kafka - TransactionId: {}, Sender: {}, Receiver: {}, Amount: {}",
+                transaction.getId(), transaction.getSenderId(), transaction.getReceiverId(), transaction.getAmount());
 
         Notification notification = new Notification();
 
@@ -34,6 +39,6 @@ public class NotificationConsumer {
         notification.setSentAt(LocalDateTime.now());
 
         notificationRepository.save(notification);
-        System.out.println("Notification saved.");
+        logger.info("Notification saved - UserId: {}, Message: {}", senderUserId, notifyMessage);
     }
 }

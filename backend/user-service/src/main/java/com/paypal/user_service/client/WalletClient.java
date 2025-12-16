@@ -6,7 +6,7 @@ import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 
-@FeignClient(name = "wallet-service", url="http://localhost:8080/api/v1/wallets")
+@FeignClient(name = "wallet-service", url="${WALLET_SERVICE_URL}")
 public interface WalletClient {
 
     @PostMapping
