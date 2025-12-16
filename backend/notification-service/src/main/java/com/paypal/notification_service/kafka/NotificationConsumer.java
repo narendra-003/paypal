@@ -33,7 +33,8 @@ public class NotificationConsumer {
         Notification notification = new Notification();
 
         Long senderUserId = transaction.getSenderId();
-        notification.setUserId(senderUserId);
+        Long receiverUserId = transaction.getReceiverId();
+        notification.setUserId(receiverUserId);
         String notifyMessage = "$ " + transaction.getAmount() + " received from user " + senderUserId;
         notification.setMessage(notifyMessage);
         notification.setSentAt(LocalDateTime.now());

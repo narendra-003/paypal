@@ -93,7 +93,7 @@ services:
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      WALLET_SERVICE_URL: http://wallet-service:8084
+      WALLET_SERVICE_URL: http://wallet-service:8085
     depends_on:
       - postgres
       - kafka

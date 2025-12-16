@@ -9,10 +9,14 @@ import com.paypal.wallet_service.exception.NotFoundException;
 import com.paypal.wallet_service.repository.WalletHoldRepository;
 import com.paypal.wallet_service.repository.WalletRepository;
 import jakarta.transaction.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 public class WalletServiceImpl implements WalletService{
+    private static final Logger logger = LoggerFactory.getLogger(WalletServiceImpl.class);
+
     private final WalletRepository walletRepository;
     private final WalletHoldRepository walletHoldRepository;
 
@@ -33,7 +37,8 @@ public class WalletServiceImpl implements WalletService{
     @Override
     @Transactional
     public WalletResponse credit(CreditRequest creditRequest) {
-        System.out.println("CREDIT Request received: " + creditRequest);
+        logger.info("CREDIT request received - UserId: {}, Currency: {}, Amount: {}",
+                creditRequest.getUserId(), creditRequest.getCurrency(), creditRequest.getAmount());
 
         Wallet wallet = walletRepository.findByUserIdAndCurrency(creditRequest.getUserId(), "INR")
                 .orElseThrow(() -> new NotFoundException("Wallet not found for user: " + creditRequest.getUserId()));
@@ -47,8 +52,8 @@ public class WalletServiceImpl implements WalletService{
 //        Transaction transaction = new Transaction(wallet.getId(), "CREDIT", amount, "SUCCESS");
 //        transactionRepository.save(transaction);
 
-        System.out.println("CREDIT Done: walletID= " + savedWallet.getId() + ", newBalance= " + savedWallet.getBalance()
-                + ", availableBalance= " + savedWallet.getAvailableBalance());
+        logger.info("CREDIT completed - WalletId: {}, NewBalance: {}, AvailableBalance: {}",
+                savedWallet.getId(), savedWallet.getBalance(), savedWallet.getAvailableBalance());
         WalletResponse walletResponse = new WalletResponse(savedWallet.getId(), savedWallet.getUserId(),
                 savedWallet.getCurrency(), savedWallet.getBalance(), savedWallet.getAvailableBalance());
         return walletResponse;
@@ -57,9 +62,8 @@ public class WalletServiceImpl implements WalletService{
     @Override
     @Transactional
     public WalletResponse debit(DebitRequest debitRequest) {
-        System.out.println("DEBIT request received: userId= " + debitRequest.getUserId() +
-                ", amount= " + debitRequest.getAmount() +
-                ", currency= " + debitRequest.getCurrency());
+        logger.info("DEBIT request received - UserId: {}, Currency: {}, Amount: {}",
+                debitRequest.getUserId(), debitRequest.getCurrency(), debitRequest.getAmount());
 
         Wallet wallet = walletRepository.findByUserIdAndCurrency(debitRequest.getUserId(), "INR")
                 .orElseThrow(() -> new NotFoundException("Wallet not found for user: " + debitRequest.getUserId()));
@@ -71,9 +75,8 @@ public class WalletServiceImpl implements WalletService{
         // TODO should update updatedAt field
         Wallet savedWallet = walletRepository.save(wallet);
 
-        System.out.println("DEBIT done: walletId=" + savedWallet.getId() +
-                ", newBalance=" + savedWallet.getBalance() +
-                ", availableBalance=" + savedWallet.getAvailableBalance());
+        logger.info("DEBIT completed - WalletId: {}, NewBalance: {}, AvailableBalance: {}",
+                savedWallet.getId(), savedWallet.getBalance(), savedWallet.getAvailableBalance());
 
         WalletResponse walletResponse = new WalletResponse(savedWallet.getId(), savedWallet.getUserId(),
                 savedWallet.getCurrency(), savedWallet.getBalance(), savedWallet.getAvailableBalance());
@@ -145,7 +148,7 @@ public class WalletServiceImpl implements WalletService{
         }
 
         Wallet wallet = walletHold.getWallet();
-        wallet.setBalance(wallet.getBalance() + walletHold.getAmount());
+        wallet.setBalance(wallet.getAvailableBalance() + walletHold.getAmount());
 
         walletHold.setStatus(WalletHoldStatus.RELEASED);
         walletRepository.save(wallet);

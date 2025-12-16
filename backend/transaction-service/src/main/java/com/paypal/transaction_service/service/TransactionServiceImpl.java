@@ -29,6 +29,9 @@ public class TransactionServiceImpl implements TransactionService {
     private final KafkaEventProducer kafkaEventProducer;
     private final RestTemplate restTemplate;
 
+    @Value("${WALLET_SERVICE_URL}")
+    private final String walletServiceUrl; // wallet service base URL
+
     public TransactionServiceImpl(TransactionRepository transactionRepository, ObjectMapper objectMapper, KafkaEventProducer kafkaEventProducer, RestTemplate restTemplate) {
         this.transactionRepository = transactionRepository;
         this.objectMapper = objectMapper;
@@ -56,7 +59,6 @@ public class TransactionServiceImpl implements TransactionService {
         logger.info("Transaction saved with PENDING status: ID={}, Sender={}, Receiver={}, Amount={}",
                 savedTransaction.getId(), senderId, receiverId, amount);
 
-        String walletServiceUrl = "http://localhost:8084/api/wallets"; // wallet service base URL
         HttpHeaders httpHeaders = new HttpHeaders();
         httpHeaders.set("Content-Type", "application/json");
 
@@ -230,12 +232,7 @@ public class TransactionServiceImpl implements TransactionService {
         httpHeaders.setContentType(MediaType.APPLICATION_JSON);
 
         HttpEntity<String> httpEntity = new HttpEntity<>(body, httpHeaders);
-        return restTemplate.postForEntity(walletUrl() + path, httpEntity, String.class);
-    }
-
-    private String walletUrl() {
-        return "http://localhost:8084/api/wallets";
-    }
+        return restTemplate.postForEntity(walletServiceUrl + path, httpEntity, String.class);
 
     private String json(String fmt, Object... args) {
         return String.format(fmt, args);
